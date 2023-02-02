@@ -1,27 +1,150 @@
 #include <Arduino.h>
-#include <NimBLEDevice.h>
 
-const char HID_SERVICE[] = "1812";
-const char HID_INFORMATION[] = "2A4A";
-const char HID_REPORT_MAP[] = "2A4B";
-const char HID_CONTROL_POINT[] = "2A4C";
-const char HID_REPORT_DATA[] = "2A4D";
 
 #include "pin_config.h"
+
 #include "TFT_eSPI.h" // https://github.com/Bodmer/TFT_eSPI
 TFT_eSPI tft = TFT_eSPI();
 
 
+
+#define USE_GAMEPAD
+#define USE_WS
+
 #include "USB.h"
-#include "USBHIDGamepad.h"
-USBHIDGamepad Gamepad;
 
-void scanEndedCB(NimBLEScanResults results);
+#ifdef USE_GAMEPAD
+	#include "USBHIDGamepad.h"
+	USBHIDGamepad Gamepad;
+#endif
 
-static NimBLEAdvertisedDevice* advDevice;
 
-static bool doConnect = false;
-static uint32_t scanTime = 0; /** 0 = scan forever */
+#ifdef USE_WS
+	#include <WiFi.h>
+	#include <AsyncTCP.h>
+	#include <ESPAsyncWebServer.h>
+	AsyncWebServer server(80);
+	AsyncWebSocket ws("/ws"); // access at ws://[esp ip]/ws
+
+	const char* ssid = "ssid";
+	const char* password = "psd";
+
+	const char* PARAM_MESSAGE = "message";
+
+
+	void notFound(AsyncWebServerRequest* request) {
+		request->send(404, "text/plain", "Not found");
+	}
+
+	void onEvent(AsyncWebSocket* server, AsyncWebSocketClient* client, AwsEventType type, void* arg, uint8_t* data, size_t len) {
+		if (type == WS_EVT_CONNECT) {
+		  //client connected
+			Serial.printf("ws[%s][%u] connect\n", server->url(), client->id());
+			client->printf("Hello Client %u :)", client->id());
+			client->ping();
+		}
+		else if (type == WS_EVT_DISCONNECT) {
+		//client disconnected
+			Serial.printf("ws[%s][%u] disconnect: %u\n", server->url(), client->id());
+		}
+		else if (type == WS_EVT_ERROR) {
+		//error was received from the other end
+			Serial.printf("ws[%s][%u] error(%u): %s\n", server->url(), client->id(), *((uint16_t*)arg), (char*)data);
+		}
+		else if (type == WS_EVT_PONG) {
+		//pong message was received (in response to a ping request maybe)
+			Serial.printf("ws[%s][%u] pong[%u]: %s\n", server->url(), client->id(), len, (len) ? (char*)data : "");
+		}
+		else if (type == WS_EVT_DATA) {
+		//data packet
+			AwsFrameInfo* info = (AwsFrameInfo*)arg;
+			if (info->final && info->index == 0 && info->len == len) {
+			  //the whole message is in a single frame and we got all of it's data
+				Serial.printf("ws[%s][%u] %s-message[%llu]: ", server->url(), client->id(), (info->opcode == WS_TEXT) ? "text" : "binary", info->len);
+				if (info->opcode == WS_TEXT) {
+					data[len] = 0;
+					Serial.printf("%s\n", (char*)data);
+				}
+				else {
+					for (size_t i = 0; i < info->len; i++) {
+						Serial.printf("%02x ", data[i]);
+					}
+					Serial.printf("\n");
+				}
+				if (info->opcode == WS_TEXT){
+					char* token;
+					const char s[2] = ";";
+					int8_t x = -1;
+					int8_t y = -1;
+					token = strtok((char*)data, s);
+					if (token) {
+						x = atoi(token);
+						token = strtok(NULL, s);
+						if (token) {
+							y = atoi(token);
+							#ifdef USE_GAMEPAD
+								Gamepad.send(x, y, 127, -127, 0, 0, 0, 0);
+							#endif
+							// client->text("I got your text message");
+							Serial.printf("x=%d, y=%d\n", x, y);
+							client->printf("x=%d, y=%d\n", x, y);
+						}
+					}
+				} else {
+					client->binary("I got your binary message");
+				}
+			}
+			else {
+			//message is comprised of multiple frames or the frame is split into multiple packets
+				if (info->index == 0) {
+					if (info->num == 0)
+						Serial.printf("ws[%s][%u] %s-message start\n", server->url(), client->id(), (info->message_opcode == WS_TEXT) ? "text" : "binary");
+					Serial.printf("ws[%s][%u] frame[%u] start[%llu]\n", server->url(), client->id(), info->num, info->len);
+				}
+
+				Serial.printf("ws[%s][%u] frame[%u] %s[%llu - %llu]: ", server->url(), client->id(), info->num, (info->message_opcode == WS_TEXT) ? "text" : "binary", info->index, info->index + len);
+				if (info->message_opcode == WS_TEXT) {
+					data[len] = 0;
+					Serial.printf("%s\n", (char*)data);
+				}
+				else {
+					for (size_t i = 0; i < len; i++) {
+						Serial.printf("%02x ", data[i]);
+					}
+					Serial.printf("\n");
+				}
+
+				if ((info->index + len) == info->len) {
+					Serial.printf("ws[%s][%u] frame[%u] end[%llu]\n", server->url(), client->id(), info->num, info->len);
+					if (info->final) {
+						Serial.printf("ws[%s][%u] %s-message end\n", server->url(), client->id(), (info->message_opcode == WS_TEXT) ? "text" : "binary");
+						if (info->message_opcode == WS_TEXT)
+							client->text("I got your text message");
+						else
+							client->binary("I got your binary message");
+					}
+				}
+			}
+		}
+	}
+#endif
+
+#ifdef USE_BLE
+	#include <NimBLEDevice.h>
+
+	const char HID_SERVICE[] = "1812";
+	const char HID_INFORMATION[] = "2A4A";
+	const char HID_REPORT_MAP[] = "2A4B";
+	const char HID_CONTROL_POINT[] = "2A4C";
+	const char HID_REPORT_DATA[] = "2A4D";
+	void scanEndedCB(NimBLEScanResults results);
+
+	static NimBLEAdvertisedDevice* advDevice;
+
+	static bool doConnect = false;
+	static uint32_t scanTime = 0; /** 0 = scan forever */
+
+
 
 
 
@@ -94,6 +217,7 @@ class ClientCallbacks: public NimBLEClientCallbacks {
 class AdvertisedDeviceCallbacks: public NimBLEAdvertisedDeviceCallbacks {
 
 	void onResult(NimBLEAdvertisedDevice* advertisedDevice) {
+		Serial.println(advertisedDevice->toString().c_str());
 		if ((advertisedDevice->getAdvType() == BLE_HCI_ADV_TYPE_ADV_DIRECT_IND_HD)
 			|| (advertisedDevice->getAdvType() == BLE_HCI_ADV_TYPE_ADV_DIRECT_IND_LD)
 			|| (advertisedDevice->haveServiceUUID() && advertisedDevice->isAdvertisingService(NimBLEUUID(HID_SERVICE)))) {
@@ -139,7 +263,9 @@ void notifyCB(NimBLERemoteCharacteristic* pRemoteCharacteristic, uint8_t* pData,
 		// 	Gamepad.releaseButton(0);
 		// }
 
-		Gamepad.send(x, y, 0, 0, 0, 0, 0, pData[0] | pData[1] << 8);
+		#ifdef USE_GAMEPAD
+			Gamepad.send(x, y, 0, 0, 0, 0, 0, pData[0] | pData[1] << 8);
+		#endif
 
 		// tft.clean()
 		tft.fillScreen(TFT_BLACK);
@@ -188,10 +314,10 @@ bool connectToServer() {
 
 	/** Check if we have a client we should reuse first **/
 	if (NimBLEDevice::getClientListSize()) {
-	  /** Special case when we already know this device, we send false as the
-	  *  second argument in connect() to prevent refreshing the service database.
-	  *  This saves considerable time and power.
-	  */
+		/** Special case when we already know this device, we send false as the
+		*  second argument in connect() to prevent refreshing the service database.
+		*  This saves considerable time and power.
+		*/
 		pClient = NimBLEDevice::getClientByPeerAddress(advDevice->getAddress());
 		if (pClient) {
 			if (!pClient->connect(advDevice, false)) {
@@ -266,24 +392,32 @@ bool connectToServer() {
 	  // HID_REPORT_MAP 0x2a4b Value: 5,1,9,2,A1,1,9,1,A1,0,5,9,19,1,29,5,15,0,25,1,75,1,
 	  // Copy and paste the value digits to http://eleccelerator.com/usbdescreqparser/
 	  // to see the decoded report descriptor.
-		pChr = pSvc->getCharacteristic(HID_REPORT_MAP);
-		if (pChr) {     /** make sure it's not null */
-			Serial.print("HID_REPORT_MAP ");
-			if (pChr->canRead()) {
-				std::string value = pChr->readValue();
-				Serial.print(pChr->getUUID().toString().c_str());
-				Serial.print(" Value: ");
-				uint8_t* p = (uint8_t*)value.data();
-				for (size_t i = 0; i < value.length(); i++) {
-					Serial.print(p[i], HEX);
-					Serial.print(',');
-				}
-				Serial.println();
-			}
-		}
-		else {
-			Serial.println("HID REPORT MAP char not found.");
-		}
+		// pChr = pSvc->getCharacteristic(HID_REPORT_MAP);
+		// if (pChr) {     /** make sure it's not null */
+		// 	Serial.print("HID_REPORT_MAP ");
+		// 	tft.print("HID_REPORT_MAP ");
+		// 	if (pChr->canRead()) {
+		// 		std::string value = pChr->readValue();
+		// 		Serial.print(pChr->getUUID().toString().c_str());
+		// 		Serial.print(" Value: ");
+		// 		tft.print(pChr->getUUID().toString().c_str());
+		// 		tft.print(" Value: ");
+		// 		uint8_t* p = (uint8_t*)value.data();
+		// 		for (size_t i = 0; i < value.length(); i++) {
+		// 			Serial.print(p[i], HEX);
+		// 			Serial.print(',');
+
+		// 			tft.print(p[i], HEX);
+		// 			tft.print(',');
+		// 		}
+		// 		Serial.println();
+		// 		tft.println();
+		// 	}
+		// }
+		// else {
+		// 	Serial.println("HID REPORT MAP char not found.");
+		// 	tft.println("HID REPORT MAP char not found.");
+		// }
 
 		// Subscribe to characteristics HID_REPORT_DATA.
 		// One real device reports 2 with the same UUID but
@@ -294,10 +428,12 @@ bool connectToServer() {
 		for (auto& it : *charvector) {
 			if (it->getUUID() == NimBLEUUID(HID_REPORT_DATA)) {
 				Serial.println(it->toString().c_str());
+				tft.println(it->toString().c_str());
 				if (it->canNotify()) {
 					if (!it->subscribe(true, notifyCB)) {
 					  /** Disconnect if subscribe failed */
 						Serial.println("subscribe notification failed");
+						tft.println("subscribe notification failed");
 						pClient->disconnect();
 						return false;
 					}
@@ -307,8 +443,11 @@ bool connectToServer() {
 
 	}
 	Serial.println("Done with this device!");
+	tft.println("Done with this device!");
 	return true;
 }
+
+#endif
 
 
 void setup() {
@@ -316,62 +455,105 @@ void setup() {
 	digitalWrite(38, HIGH);
 
 	Serial.begin(115200);
-	Serial.println("Start blinky");
+	Serial.println("Start !!!");
 
-	tft.init();
-	tft.setRotation(1);
-	tft.fillScreen(TFT_BLACK);
-	digitalWrite(TFT_LEDA_PIN, 0);
-	tft.setTextFont(1);
-	tft.setTextColor(TFT_GREEN, TFT_BLACK);
+	// tft.init();
+	// tft.setRotation(1);
+	// tft.fillScreen(TFT_BLACK);
+	// digitalWrite(TFT_LEDA_PIN, 0);
+	// tft.setTextFont(1);
+	// tft.setTextColor(TFT_GREEN, TFT_BLACK);
 
-	tft.printf("HELLO\n");
+	// tft.printf("HELLO\n");
 
-	Gamepad.begin();
-	USB.begin();
+	#ifdef USE_GAMEPAD
+		Gamepad.begin();
+		USB.begin();
+	#endif
 
-	NimBLEDevice::init("");
+	#ifdef USE_WS
+		Serial.printf("WiFi start!\n");
+		WiFi.mode(WIFI_STA);
+		WiFi.begin(ssid, password);
+		if (WiFi.waitForConnectResult() != WL_CONNECTED) {
+			Serial.printf("WiFi Failed!\n");
+			delay(2000);
+			ESP.restart();
+			// return;
+		}
 
-	/** Set the IO capabilities of the device, each option will trigger a different pairing method.
-	 *  BLE_HS_IO_KEYBOARD_ONLY    - Passkey pairing
-	 *  BLE_HS_IO_DISPLAY_YESNO   - Numeric comparison pairing
-	 *  BLE_HS_IO_NO_INPUT_OUTPUT - DEFAULT setting - just works pairing
-	 */
-	//NimBLEDevice::setSecurityIOCap(BLE_HS_IO_KEYBOARD_ONLY); // use passkey
-	//NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_YESNO); //use numeric comparison
+		Serial.print("IP Address: ");
+		Serial.println(WiFi.localIP());
 
-	/** 2 different ways to set security - both calls achieve the same result.
-	 *  no bonding, no man in the middle protection, secure connections.
-	 *
-	 *  These are the default values, only shown here for demonstration.
-	 */
-	NimBLEDevice::setSecurityAuth(true, false, true);
-	//NimBLEDevice::setSecurityAuth(/*BLE_SM_PAIR_AUTHREQ_BOND | BLE_SM_PAIR_AUTHREQ_MITM |*/ BLE_SM_PAIR_AUTHREQ_SC);
+		server.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
+			request->send(200, "text/plain", "Hello, world");
+		});
 
-	/** Optional: set the transmit power, default is 3db */
-	NimBLEDevice::setPower(ESP_PWR_LVL_P9); /** +9db */
+		// Send a GET request to <IP>/get?message=<message>
+		server.on("/get", HTTP_GET, [](AsyncWebServerRequest* request) {
+			String message;
+			if (request->hasParam(PARAM_MESSAGE)) {
+				message = request->getParam(PARAM_MESSAGE)->value();
+			}
+			else {
+				message = "No message sent";
+			}
+			request->send(200, "text/plain", "Hello, GET: " + message);
+		});
 
-	/** Optional: set any devices you don't want to get advertisments from */
-	// NimBLEDevice::addIgnored(NimBLEAddress ("aa:bb:cc:dd:ee:ff"));
+		server.onNotFound(notFound);
 
-	/** create new scan */
-	NimBLEScan* pScan = NimBLEDevice::getScan();
+		ws.onEvent(onEvent);
+		server.addHandler(&ws);
 
-	/** create a callback that gets called when advertisers are found */
-	pScan->setAdvertisedDeviceCallbacks(new AdvertisedDeviceCallbacks());
+		server.begin();
+	#endif
 
-	/** Set scan interval (how often) and window (how long) in milliseconds */
-	pScan->setInterval(45);
-	pScan->setWindow(15);
 
-	/** Active scan will gather scan response data from advertisers
-	 *  but will use more energy from both devices
-	 */
-	pScan->setActiveScan(true);
-	/** Start scanning for advertisers for the scan time specified (in seconds) 0 = forever
-	 *  Optional callback for when scanning stops.
-	 */
-	pScan->start(scanTime, scanEndedCB);
+	#ifdef USE_BLE
+		NimBLEDevice::init("");
+
+		/** Set the IO capabilities of the device, each option will trigger a different pairing method.
+		 *  BLE_HS_IO_KEYBOARD_ONLY    - Passkey pairing
+		 *  BLE_HS_IO_DISPLAY_YESNO   - Numeric comparison pairing
+		 *  BLE_HS_IO_NO_INPUT_OUTPUT - DEFAULT setting - just works pairing
+		 */
+		//NimBLEDevice::setSecurityIOCap(BLE_HS_IO_KEYBOARD_ONLY); // use passkey
+		//NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_YESNO); //use numeric comparison
+
+		/** 2 different ways to set security - both calls achieve the same result.
+		 *  no bonding, no man in the middle protection, secure connections.
+		 *
+		 *  These are the default values, only shown here for demonstration.
+		 */
+		NimBLEDevice::setSecurityAuth(true, false, true);
+		//NimBLEDevice::setSecurityAuth(/*BLE_SM_PAIR_AUTHREQ_BOND | BLE_SM_PAIR_AUTHREQ_MITM |*/ BLE_SM_PAIR_AUTHREQ_SC);
+
+		/** Optional: set the transmit power, default is 3db */
+		NimBLEDevice::setPower(ESP_PWR_LVL_P9); /** +9db */
+
+		/** Optional: set any devices you don't want to get advertisments from */
+		// NimBLEDevice::addIgnored(NimBLEAddress ("aa:bb:cc:dd:ee:ff"));
+
+		/** create new scan */
+		NimBLEScan* pScan = NimBLEDevice::getScan();
+
+		/** create a callback that gets called when advertisers are found */
+		pScan->setAdvertisedDeviceCallbacks(new AdvertisedDeviceCallbacks());
+
+		/** Set scan interval (how often) and window (how long) in milliseconds */
+		pScan->setInterval(45);
+		pScan->setWindow(15);
+
+		/** Active scan will gather scan response data from advertisers
+		 *  but will use more energy from both devices
+		 */
+		pScan->setActiveScan(true);
+		/** Start scanning for advertisers for the scan time specified (in seconds) 0 = forever
+		 *  Optional callback for when scanning stops.
+		 */
+		pScan->start(scanTime, scanEndedCB);
+	#endif
 }
 
 void loop() {
@@ -382,25 +564,29 @@ void loop() {
 	// Serial.println("LED OFF");
 	// digitalWrite(38, HIGH);
 	// delay(100);
+	
 
 
 	if (digitalRead(0) == 0) {
 		ESP.restart();
 	}
-	if (!doConnect) return;
+
+	#ifdef USE_BLE
+		if (!doConnect) return;
 
 
 
-	doConnect = false;
+		doConnect = false;
 
-	/** Found a device we want to connect to, do it now */
-	if (connectToServer()) {
-		// Serial.println("Success! we should now be getting notifications!");
-		digitalWrite(38, LOW);
-		// delay(100);
-	}
-	else {
-		Serial.println("Failed to connect, starting scan");
-		NimBLEDevice::getScan()->start(scanTime, scanEndedCB);
-	}
+		/** Found a device we want to connect to, do it now */
+		if (connectToServer()) {
+			// Serial.println("Success! we should now be getting notifications!");
+			digitalWrite(38, LOW);
+			// delay(100);
+		}
+		else {
+			Serial.println("Failed to connect, starting scan");
+			NimBLEDevice::getScan()->start(scanTime, scanEndedCB);
+		}
+	#endif
 }

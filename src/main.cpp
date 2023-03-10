@@ -5,14 +5,28 @@
 #define USE_BLE
 
 
-#include "Adafruit_TinyUSB.h"
+// #include "Adafruit_TinyUSB.h"
 #ifdef USE_GAMEPAD
   // HID report descriptor using TinyUSB's template
   // Single Report (no ID) descriptor
-  uint8_t const desc_hid_report[] ={TUD_HID_REPORT_DESC_GAMEPAD()};
-  Adafruit_USBD_HID usb_hid(desc_hid_report, sizeof(desc_hid_report), HID_ITF_PROTOCOL_NONE, 2, false);
+  // uint8_t const desc_hid_report[] ={TUD_HID_REPORT_DESC_GAMEPAD()};
+  // Adafruit_USBD_HID usb_hid(desc_hid_report, sizeof(desc_hid_report), HID_ITF_PROTOCOL_NONE, 2, false);
+
+  #include "USB.h"
+  #include "USBHIDGamepad.h"
+  USBHIDGamepad Gamepad;
+  typedef struct { 
+  int8_t  x;         ///< Delta x  movement of left analog-stick
+  int8_t  y;         ///< Delta y  movement of left analog-stick
+  int8_t  z;         ///< Delta z  movement of right analog-joystick
+  int8_t  rz;        ///< Delta Rz movement of right analog-joystick
+  int8_t  rx;        ///< Delta Rx movement of analog left trigger
+  int8_t  ry;        ///< Delta Ry movement of analog right trigger
+  uint8_t hat;       ///< Buttons mask for currently pressed buttons in the DPad/hat
+  uint32_t buttons;  ///< Buttons mask for currently pressed buttons
+} t_gamepad;
 #endif 
-hid_gamepad_report_t    gp;
+// hid_gamepad_report_t    gp;
 
 #include "pin_config.h"
 
@@ -169,58 +183,55 @@ TFT_eSPI tft = TFT_eSPI();
             switch (rxValue[2]) {
               case '1':
                 if (rxValue[3] == '1')
-                  gp.buttons |= GAMEPAD_BUTTON_0;
+                  Gamepad.pressButton(0);
                 else
-                  gp.buttons &= ~(GAMEPAD_BUTTON_0);
+                  Gamepad.releaseButton(0);
                 break;
               case '2':
                 if (rxValue[3] == '1')
-                  gp.buttons |= GAMEPAD_BUTTON_1;
+                  Gamepad.pressButton(1);
                 else
-                  gp.buttons &= ~(GAMEPAD_BUTTON_1);
+                  Gamepad.releaseButton(1);
                 break;
               case '3':
                 if (rxValue[3] == '1')
-                  gp.buttons |= GAMEPAD_BUTTON_2;
+                  Gamepad.pressButton(2);
                 else
-                  gp.buttons &= ~(GAMEPAD_BUTTON_2);
+                  Gamepad.releaseButton(2);
                 break;
               case '4':
                 if (rxValue[3] == '1')
-                  gp.buttons |= GAMEPAD_BUTTON_3;
+                  Gamepad.pressButton(3);
                 else
-                  gp.buttons &= ~(GAMEPAD_BUTTON_3);
+                  Gamepad.releaseButton(3);
                 break;
               case '5':
                 if (rxValue[3] == '1')
-                  gp.hat = GAMEPAD_HAT_UP;
+                  Gamepad.hat(HAT_UP);
                 else
-                  gp.hat = GAMEPAD_HAT_CENTERED;
+                  Gamepad.hat(HAT_CENTER);
                 break;
               case '6':
                 if (rxValue[3] == '1')
-                  gp.hat = GAMEPAD_HAT_DOWN;
+                  Gamepad.hat(HAT_DOWN);
                 else
-                  gp.hat = GAMEPAD_HAT_CENTERED;
+                  Gamepad.hat(HAT_CENTER);
                 break;
               case '7':
                 if (rxValue[3] == '1')
-                  gp.hat = GAMEPAD_HAT_LEFT;
+                  Gamepad.hat(HAT_LEFT);
                 else
-                  gp.hat = GAMEPAD_HAT_CENTERED;
+                  Gamepad.hat(HAT_CENTER);
                 break;
               case '8':
                 if (rxValue[3] == '1')
-                  gp.hat = GAMEPAD_HAT_RIGHT;
+                  Gamepad.hat(HAT_RIGHT);
                 else
-                  gp.hat = GAMEPAD_HAT_CENTERED;
+                  Gamepad.hat(HAT_CENTER);
                 break;
               default:
                 break;
               }
-              #ifdef USE_GAMEPAD
-                usb_hid.sendReport(0, &gp, sizeof(gp));
-              #endif
             break;
           case 'C':
             // set_all_pixel(rxValue[2], rxValue[3], rxValue[4], 0);
@@ -239,9 +250,7 @@ TFT_eSPI tft = TFT_eSPI();
                 if (token) {
                   y = atoi(token);
                     #ifdef USE_GAMEPAD
-                      gp.x = x;
-                      gp.y = y;
-                      usb_hid.sendReport(0, &gp, sizeof(gp));
+                      Gamepad.leftStick(x,y);
                     #endif
                     Serial.printf("x=%d, y=%d\n", x, y);
                     char str[100];
@@ -253,9 +262,19 @@ TFT_eSPI tft = TFT_eSPI();
               }
             }
             break;
+          case 'Z':
+            {
+              uint8_t *ptr = (uint8_t*)rxValue.c_str();
+              t_gamepad* gp = (t_gamepad*)(ptr + 2);
+              Gamepad.send(gp->x, gp->y, gp->z, gp->rz, gp->rx, gp->ry, gp->hat, gp->buttons);
+            }
+            break;
           default:
             break;
           }
+        rxValue.append("\n");
+        pTxCharacteristic->setValue((uint8_t*)rxValue.c_str(), strlen(rxValue.c_str()));
+        pTxCharacteristic->notify();
       }
     }
   };
@@ -269,10 +288,12 @@ void setup() {
   Serial.println("Start !!!");
 
   #ifdef USE_GAMEPAD
-    usb_hid.begin();
+    // usb_hid.begin();
 
-    // wait until device mounted
-    while( !TinyUSBDevice.mounted() ) delay(1);
+    // // wait until device mounted
+    // while( !TinyUSBDevice.mounted() ) delay(1);
+  Gamepad.begin();
+  USB.begin();
   #endif
 
   #ifdef USE_WS
@@ -313,7 +334,7 @@ void setup() {
     server.begin();
   #endif
 
-#ifdef USE_BLE
+  #ifdef USE_BLE
     Serial.println("Start BLE");
     // Create the BLE Device
     NimBLEDevice::init("Play-Ability");
@@ -351,7 +372,7 @@ void setup() {
     // Start advertising
     pServer->getAdvertising()->start();
     Serial.println("Waiting a client connection to notify...");
-#endif
+  #endif
 
 }
 
@@ -369,22 +390,22 @@ void loop() {
   }
 
 
-  #ifdef USE_GAMEPAD
+  // #ifdef USE_GAMEPAD
 
-    if ( !usb_hid.ready() ) return;
-    // Joystick 2 UP
-    Serial.println("Joystick 2 UP");
-    gp.z  = 0;
-    gp.rz = 127;
-    usb_hid.sendReport(0, &gp, sizeof(gp));
-    delay(2000);
+  //   if ( !usb_hid.ready() ) return;
+  //   // Joystick 2 UP
+  //   Serial.println("Joystick 2 UP");
+  //   gp.z  = 0;
+  //   gp.rz = 127;
+  //   usb_hid.sendReport(0, &gp, sizeof(gp));
+  //   delay(2000);
     
-    // Joystick 2 DOWN
-    Serial.println("Joystick 2 DOWN");
-    gp.z  = 0;
-    gp.rz = -127;
-    usb_hid.sendReport(0, &gp, sizeof(gp));
-    delay(2000);
-  #endif
-  delay(100);
+  //   // Joystick 2 DOWN
+  //   Serial.println("Joystick 2 DOWN");
+  //   gp.z  = 0;
+  //   gp.rz = -127;
+  //   usb_hid.sendReport(0, &gp, sizeof(gp));
+  //   delay(2000);
+  // #endif
+  delay(1);
 }

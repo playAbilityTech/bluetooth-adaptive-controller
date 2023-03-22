@@ -79,13 +79,7 @@ uint8_t txValue = 0;
                   y = atoi(token);
                       gp.x = x;
                       gp.y = y;
-                      usb_hid.sendReport(0, &gp, sizeof(gp));
-                    Serial.printf("x=%d, y=%d\n", x, y);
-                    char str[100];
-                    memset(str, 0, 100);
-                    sprintf(str, "x=%d, y=%d\r\n", x, y);
-                    pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
-                    pTxCharacteristic->notify();
+                      usb_hid.sendReport(0, &gp, sizeof(gp));  
                 }
               }
             }
@@ -94,16 +88,12 @@ uint8_t txValue = 0;
             {
               uint8_t *ptr = (uint8_t*)rxValue.c_str();
               t_gamepad* gp = (t_gamepad*)(ptr + 2);
-              usb_hid.sendReport(0, &gp, sizeof(gp));
-             
+              usb_hid.sendReport(0, &gp, sizeof(gp));           
             }
             break;
           default:
             break;
           }
-        rxValue.append("\n");
-        pTxCharacteristic->setValue((uint8_t*)rxValue.c_str(), strlen(rxValue.c_str()));
-        pTxCharacteristic->notify();
       }
     }
   };

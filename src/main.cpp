@@ -9,7 +9,7 @@ uint8_t const desc_hid_report[] =
 
 // USB HID object. For ESP32 these values cannot be changed after this declaration
 // desc report, desc len, protocol, interval, use out endpoint
-Adafruit_USBD_HID usb_hid(desc_hid_report, sizeof(desc_hid_report), HID_ITF_PROTOCOL_NONE, 2, false);
+Adafruit_USBD_HID usb_hid(desc_hid_report, sizeof(desc_hid_report), HID_ITF_PROTOCOL_NONE, 1, false);
 
 // Report payload defined in src/class/hid/hid.h
 // - For Gamepad Button Bit Mask see  hid_gamepad_button_bm_t
@@ -183,8 +183,7 @@ void loop() {
   if (digitalRead(0) == 0) {
     ESP.restart();
   }
-  inputTest();
-  delay(1);
+  //inputTest();
+  
 }
-
 

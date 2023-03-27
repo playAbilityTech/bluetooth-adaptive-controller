@@ -9,7 +9,7 @@ uint8_t const desc_hid_report[] =
 
 // USB HID object. For ESP32 these values cannot be changed after this declaration
 // desc report, desc len, protocol, interval, use out endpoint
-Adafruit_USBD_HID usb_hid(desc_hid_report, sizeof(desc_hid_report), HID_ITF_PROTOCOL_NONE, 1, false);
+Adafruit_USBD_HID usb_hid(desc_hid_report, sizeof(desc_hid_report), HID_ITF_PROTOCOL_NONE, 2, false);
 
 // Report payload defined in src/class/hid/hid.h
 // - For Gamepad Button Bit Mask see  hid_gamepad_button_bm_t
@@ -85,12 +85,22 @@ uint8_t txValue = 0;
             }
             break;
           case 'Z':
-            {
-              uint8_t *ptr = (uint8_t*)rxValue.c_str();
-              t_gamepad* gp = (t_gamepad*)(ptr + 2);
-              usb_hid.sendReport(0, &gp, sizeof(gp));           
-            }
-            break;
+          {
+            uint8_t *ptr = (uint8_t*)rxValue.c_str();
+            t_gamepad *received_gp = (t_gamepad*)(ptr + 2);
+          
+            gp.x = received_gp->x;
+            gp.y = received_gp->y;
+            gp.z = received_gp->z;
+            gp.rz = received_gp->rz;
+            gp.rx = received_gp->rx;
+            gp.ry = received_gp->ry;
+            gp.hat = received_gp->hat;
+            gp.buttons = received_gp->buttons;
+          
+            usb_hid.sendReport(0, &gp, sizeof(gp));
+          }
+          break;
           default:
             break;
           }
@@ -104,15 +114,15 @@ void inputTest(){
    if ( !usb_hid.ready() ) return;
    //Joystick 2 UP
    Serial.println("Joystick 2 UP");
-   gp.z  = 0;
-   gp.rz = 127;
+   gp.x  = 0;
+   gp.y = 127;
    usb_hid.sendReport(0, &gp, sizeof(gp));
    delay(500);
 
    // Joystick 2 DOWN
    Serial.println("Joystick 2 DOWN");
-   gp.z  = 0;
-   gp.rz = -127;
+   gp.x  = 0;
+   gp.y = -127;
    usb_hid.sendReport(0, &gp, sizeof(gp));
    delay(500);
 }
@@ -176,4 +186,3 @@ void loop() {
   //inputTest();
   
 }
-

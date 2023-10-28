@@ -6,7 +6,7 @@ uint8_t const desc_hid_report[] =
 {
   TUD_HID_REPORT_DESC_GAMEPAD()
 };
-  
+
 // USB HID object. For ESP32 these values cannot be changed after this declaration
 // desc report, desc len, protocol, interval, use out endpoint
 Adafruit_USBD_HID usb_hid(desc_hid_report, sizeof(desc_hid_report), HID_ITF_PROTOCOL_NONE, 2, false);
@@ -30,8 +30,6 @@ hid_gamepad_report_t    gp;
 
 
 #include "pin_config.h"
-#include "TFT_eSPI.h" // https://github.com/Bodmer/TFT_eSPI
-TFT_eSPI tft = TFT_eSPI();
 
 #include <NimBLEDevice.h>
 
@@ -49,19 +47,17 @@ uint8_t txValue = 0;
  class MyServerCallbacks: public NimBLEServerCallbacks {
     void onConnect(NimBLEServer* pServer) {
       deviceConnected = true;
-      tft.println("Connected");
     };
 
     void onDisconnect(NimBLEServer* pServer) {
       deviceConnected = false;
-      tft.println("Disconnected");
     }
   };
 
   class MyCallbacks: public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic* pCharacteristic) {
       std::string rxValue = pCharacteristic->getValue();
-      Serial.print("Received Value: "); 
+      Serial.print("Received Value: ");
       for (int i = 0; i < rxValue.length(); i++)
         Serial.print(rxValue[i]);
       Serial.println();
@@ -175,18 +171,9 @@ void setup() {
   
   pinMode(38, OUTPUT);
   digitalWrite(38, HIGH);
-   Serial.begin(115200);
+
   usb_hid.begin();
   while( !TinyUSBDevice.mounted() ) delay(1);
-
-  tft.init();
-  tft.setRotation(1);
-  tft.fillScreen(TFT_GREEN);
-  digitalWrite(TFT_LEDA_PIN, 0);
-  tft.setTextFont(1);
-  tft.setTextColor(TFT_GREEN, TFT_BLACK);
-
-  tft.printf("HELLO\n");
 
   setupBLE();
 }
